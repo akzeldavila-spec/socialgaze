@@ -45,31 +45,6 @@ let phaseDurations = [];
 let userPoints = [];
 
 // Initialize the experiment
-function init() {
-    console.log('Initializing experiment...');
-    sessionInfo = getSessionInfo();
-    console.log('Session:', sessionInfo.sessionId, 'Player:', sessionInfo.playerNum);
-
-    // Create canvas
-    canvas = document.createElement('canvas');
-    canvas.width = CONFIG.canvasWidth;
-    canvas.height = CONFIG.canvasHeight;
-    canvas.style.display = 'block';
-    canvas.style.margin = '0 auto';
-    canvas.style.backgroundColor = CONFIG.backgroundColor;
-    document.getElementById('root').appendChild(canvas);
-    ctx = canvas.getContext('2d');
-
-    // Set up keyboard listener
-    document.addEventListener('keydown', handleKeyPress);
-
-    // Display waiting screen and wait for both players
-    displayWaitingScreen();
-
-    // Check if both players are ready
-    checkPlayersReady();
-}
-
 function displayWaitingScreen() {
     ctx.fillStyle = CONFIG.backgroundColor;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -790,10 +765,38 @@ function drawImage(img, x, y, width, height) {
 }
 
 // Start when page loads
+// Start when page loads
 window.addEventListener('load', function() {
-    registerPlayerInSession();
     init();
 });
+
+function init() {
+    console.log('Initializing experiment...');
+    sessionInfo = getSessionInfo();
+    console.log('Session:', sessionInfo.sessionId, 'Player:', sessionInfo.playerNum);
+
+    // Register player now that sessionInfo is set
+    registerPlayerInSession();
+
+    // Create canvas
+    canvas = document.createElement('canvas');
+    canvas.width = CONFIG.canvasWidth;
+    canvas.height = CONFIG.canvasHeight;
+    canvas.style.display = 'block';
+    canvas.style.margin = '0 auto';
+    canvas.style.backgroundColor = CONFIG.backgroundColor;
+    document.getElementById('root').appendChild(canvas);
+    ctx = canvas.getContext('2d');
+
+    // Set up keyboard listener
+    document.addEventListener('keydown', handleKeyPress);
+
+    // Display waiting screen and wait for both players
+    displayWaitingScreen();
+
+    // Check if both players are ready
+    checkPlayersReady();
+}
 
 function getSessionInfo() {
     let sessionId = prompt("Enter Session ID (both players use same ID):");
