@@ -278,6 +278,8 @@ function startPhase(phase, serverTime) {
 function listenForPhaseChanges() {
     if (phaseListener) phaseListener(); // Unsubscribe any existing listener
 
+    let firstPhaseReceived = false;
+
     phaseListener = db.collection('sessions').doc(sessionInfo.sessionId)
         .onSnapshot(function(doc) {
             if (!doc.exists) return;
@@ -292,16 +294,42 @@ function listenForPhaseChanges() {
                 console.log('Phase change received from Firebase: ' + newPhase);
 
                 // Advance trial index when moving into postFeedbackDelay
-                if (newPhase === 'postFeedbackDelay' || 
+                if (newPhase === 'postFeedbackDelay' ||
                     (newPhase === 'complete' && currentPhase === 'feedback')) {
                     trialManager.nextTrial();
                     keyPressed = '';
                 }
 
                 startPhase(newPhase, serverPhaseStartTime);
+
+                // Player 2: acknowledge first phase received and start loop
+                if (sessionInfo.playerNum === 2 && !firstPhaseReceived) {
+                    firstPhaseReceived = true;
+                    db.collection('sessions').doc(sessionInfo.sessionId).set({
+                        player2_phase_acknowledged: true
+                    }, { merge: true }).then(function() {
+                        console.log('Player 2 acknowledged first phase, starting game loop');
+                        requestAnimationFrame(gameLoop);
+                    });
+                }
             }
         }, function(error) {
             console.error('Error listening for phase changes:', error);
+        });
+}
+
+// Player 1 waits for Player 2 to acknowledge receiving the first phase signal
+function waitForPlayer2Acknowledgement() {
+    let unsubscribe = db.collection('sessions').doc(sessionInfo.sessionId)
+        .onSnapshot(function(doc) {
+            if (doc.exists && doc.data().player2_phase_acknowledged) {
+                console.log('Player 2 acknowledged! Starting Player 1 game loop');
+                unsubscribe();
+                // Both players are now in sync - start Player 1's loop
+                requestAnimationFrame(gameLoop);
+            } else {
+                console.log('Waiting for Player 2 to acknowledge...');
+            }
         });
 }
 
@@ -800,6 +828,11 @@ function proceedWithExperiment() {
         console.log('Starting experiment at trial index: ' + CONFIG.startingTrialIndex + ' (Trial ' + trialManager.getCurrentTrialNumber() + ')');
     }
 
+    // Reset acknowledgement flag for a fresh start
+    db.collection('sessions').doc(sessionInfo.sessionId).set({
+        player2_phase_acknowledged: false
+    }, { merge: true });
+
     let updateData = {};
     updateData['player' + sessionInfo.playerNum + '_trials_loaded'] = true;
 
@@ -844,12 +877,15 @@ function waitForBothPlayersImagesLoaded() {
             // Start listening for phase changes from Firebase
             listenForPhaseChanges();
 
-            // Player 1 sets the initial phase
             if (sessionInfo.playerNum === 1) {
+                // Player 1 signals the first phase, then waits for Player 2 to acknowledge
+                // before starting its own game loop - ensuring both start together
                 signalPhaseChange('instructions');
+                waitForPlayer2Acknowledgement();
             }
+            // Player 2's game loop is started inside listenForPhaseChanges
+            // once the first phase signal is received and acknowledged
 
-            requestAnimationFrame(gameLoop);
         } else {
             console.log('Waiting for other player to finish loading images...');
         }
