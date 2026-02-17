@@ -36,6 +36,7 @@ let clientServerTimeDiff = 0;
 let playerPressedSpace = false;
 let bothPlayersPressedSpace = false;
 let checkingSpacePress = false;
+let sessionCleared = false;
 
 // Phase tracking array
 let phaseDurations = [];
@@ -226,43 +227,28 @@ function uploadPlayerReadyToFirebase() {
 
 // Check if both players have pressed space (are ready)
 function checkBothPlayersPressedSpace() {
-    if (checkingSpacePress) return; // Prevent multiple simultaneous checks
-    checkingSpacePress = true;
-    
-    db.collection('sessions').doc(sessionInfo.sessionId).get().then(function(doc) {
+    let unsubscribe = db.collection('sessions').doc(sessionInfo.sessionId).onSnapshot(function(doc) {
         if (doc.exists && doc.data().player1_ready && doc.data().player2_ready) {
-            // Both players are ready
+            unsubscribe();
             bothPlayersPressedSpace = true;
             console.log('Both players pressed space! Ready to continue.');
-            checkingSpacePress = false;
-        } else {
-            // Not both ready yet, keep checking
-            checkingSpacePress = false;
-            setTimeout(checkBothPlayersPressedSpace, 500);
         }
-    }).catch(function(error) {
-        console.error('Error checking if both players pressed space:', error);
-        checkingSpacePress = false;
-        setTimeout(checkBothPlayersPressedSpace, 500);
     });
 }
 
 // Handle keyboard input
 function handleKeyPress(event) {
     let key = event.key.toLowerCase();
-    
-    if (key === ' ') {
-        keyPressed = 'space';
-    } else if (key === 'arrowleft') {
-        keyPressed = 'left';
-    } else if (key === 'arrowright') {
-        keyPressed = 'right';
-    } else if (key === 'arrowup') {
-        keyPressed = 'up';
-    } else if (key === 'arrowdown') {
-        keyPressed = 'down';
+
+    if (currentPhase === 'decision') {
+        if (key === 'arrowleft') keyPressed = 'left';
+        else if (key === 'arrowright') keyPressed = 'right';
+        else if (key === 'arrowup') keyPressed = 'up';
+        else if (key === 'arrowdown') keyPressed = 'down';
+    } else if (currentPhase === 'instructions') {
+        if (key === ' ') keyPressed = 'space';
     }
-    
+
     console.log('Key pressed: ' + keyPressed + ' in phase: ' + currentPhase);
 }
 
@@ -569,7 +555,7 @@ function renderDecision() {
         drawText('[Choice 2]', pos2.x, pos2.y, '20px Arial', 'center');
     }
     
-    drawText('Press arrow key for your choice', canvas.width / 2, 30, '20px Arial', 'center');
+    //drawText('Press arrow key for your choice', canvas.width / 2, 30, '20px Arial', 'center');
 }
 
 function renderFeedback() {
@@ -647,7 +633,7 @@ function renderFeedback() {
         } else {
             drawText('[Your Choice]', leftX, imageY, '20px Arial', 'center');
         }
-        drawText('Points: ' + yourPointValue, leftX, pointsY, '28px Arial', 'center');
+        drawColoredText('Points: ' + yourPointValue, leftX, pointsY, '28px Arial', 'center', '#006400');
 
         // Green box around your chart
         ctx.strokeStyle = '#006400';
@@ -669,10 +655,10 @@ function renderFeedback() {
         } else {
             drawText('[Partner Choice]', rightX, imageY, '20px Arial', 'center');
         }
-        drawText('Points: ' + partnerPointValue, rightX, pointsY, '28px Arial', 'center');
+        drawColoredText('Points: ' + partnerPointValue, rightX, pointsY, '28px Arial', 'center', '#4B0082');
 
         // Red box around partner's chart
-        ctx.strokeStyle = '#800080';
+        ctx.strokeStyle = '#4B0082';
         ctx.lineWidth = 1;
         let boxSize = 140;
         ctx.strokeRect(rightX - boxSize, imageY - boxSize, boxSize * 2, boxSize * 2);
@@ -685,7 +671,21 @@ function renderFeedback() {
 function renderComplete() {
     drawText('Experiment Complete!\n\nThank you for participating.', canvas.width / 2, canvas.height / 2, '32px Arial', 'center');
     savePhaseDurations();
+    clearSession();
 }
+function clearSession() {
+    if (sessionCleared) return;
+    sessionCleared = true;
+
+    db.collection('sessions').doc(sessionInfo.sessionId)
+        .collection('decisions').get().then(function(snapshot) {
+            snapshot.forEach(function(doc) {
+                doc.ref.delete();
+            });
+        });
+    db.collection('sessions').doc(sessionInfo.sessionId).delete();
+}
+
 
 function renderExit() {
     drawText('Up arrow pressed\n\nExperiment ended', canvas.width / 2, canvas.height / 2, '32px Arial', 'center');
@@ -959,6 +959,10 @@ function waitForBothPlayersImagesLoaded() {
         }
     });
 }
+
+window.addEventListener('beforeunload', function() {
+    clearSession();
+});
 function renderLegend() {
     let symbols = trialManager.symbols;
     let labels = {
@@ -986,4 +990,11 @@ function renderLegend() {
         ctx.textBaseline = 'middle';
         ctx.fillText(labels[symbols[i].id], startX + iconSize + 8, y + iconSize / 2);
     }
+}
+function drawColoredText(text, x, y, font, align, color) {
+    ctx.fillStyle = color;
+    ctx.font = font;
+    ctx.textAlign = align;
+    ctx.textBaseline = 'middle';
+    ctx.fillText(text, x, y);
 }
