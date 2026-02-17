@@ -30,13 +30,13 @@ let sessionInfo = null;
 let partnerChoice = null;
 let partnerTimestamp = null;
 let yourDecisionTimestamp = null;
+let partnerDecisionFetched = false;
 let bothPlayersReady = false;
 let experimentStartTime = null;
+let clientServerTimeDiff = 0;
 let playerPressedSpace = false;
 let bothPlayersPressedSpace = false;
 let checkingSpacePress = false;
-let playerChoice = null;
-let phaseListener = null; // Holds the Firebase real-time phase listener
 
 // Phase tracking array
 let phaseDurations = [];
@@ -45,6 +45,31 @@ let phaseDurations = [];
 let userPoints = [];
 
 // Initialize the experiment
+function init() {
+    console.log('Initializing experiment...');
+    sessionInfo = getSessionInfo();
+    console.log('Session:', sessionInfo.sessionId, 'Player:', sessionInfo.playerNum);  
+    
+    // Create canvas
+    canvas = document.createElement('canvas');
+    canvas.width = CONFIG.canvasWidth;
+    canvas.height = CONFIG.canvasHeight;
+    canvas.style.display = 'block';
+    canvas.style.margin = '0 auto';
+    canvas.style.backgroundColor = CONFIG.backgroundColor;
+    document.getElementById('root').appendChild(canvas);
+    ctx = canvas.getContext('2d');
+    
+    // Set up keyboard listener
+    document.addEventListener('keydown', handleKeyPress);
+    
+    // Display waiting screen and wait for both players
+    displayWaitingScreen();
+    
+    // Check if both players are ready
+    checkPlayersReady();
+}
+
 function displayWaitingScreen() {
     ctx.fillStyle = CONFIG.backgroundColor;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
@@ -52,19 +77,24 @@ function displayWaitingScreen() {
 }
 
 function checkPlayersReady() {
+    // Check if both players have joined the session
     db.collection('sessions').doc(sessionInfo.sessionId).get().then(function(doc) {
         if (doc.exists && doc.data().player1_joined && doc.data().player2_joined) {
+            // Both players are ready, set experiment start time if not already set
             if (!doc.data().experimentStartTime) {
                 db.collection('sessions').doc(sessionInfo.sessionId).set({
                     experimentStartTime: firebase.firestore.FieldValue.serverTimestamp()
                 }, { merge: true }).then(function() {
                     console.log('Experiment start time set');
+                    // Wait a moment for the timestamp to be recorded, then start
                     setTimeout(startExperiment, 500);
                 });
             } else {
+                // Start time already set, proceed with experiment
                 startExperiment();
             }
         } else {
+            // Not ready yet, keep checking
             setTimeout(checkPlayersReady, 1000);
             displayWaitingScreen();
         }
@@ -77,7 +107,7 @@ function checkPlayersReady() {
 function registerPlayerInSession() {
     let updateData = {};
     updateData['player' + sessionInfo.playerNum + '_joined'] = true;
-
+    
     db.collection('sessions').doc(sessionInfo.sessionId).set(updateData, { merge: true }).then(function() {
         console.log('Player ' + sessionInfo.playerNum + ' registered in session');
     }).catch(function(error) {
@@ -87,32 +117,48 @@ function registerPlayerInSession() {
 
 function startExperiment() {
     console.log('Both players ready! Starting experiment...');
-
+    
+    // Get the experiment start time from Firebase for synchronization
     db.collection('sessions').doc(sessionInfo.sessionId).get().then(function(doc) {
         if (doc.exists && doc.data().experimentStartTime) {
-            console.log('Experiment start time confirmed');
-
+            // Calculate the difference between client time and server time
+            let serverTimestamp = doc.data().experimentStartTime.toDate().getTime();
+            let clientTime = Date.now();
+            clientServerTimeDiff = serverTimestamp - clientTime;
+            
+            console.log('Server timestamp:', serverTimestamp);
+            console.log('Client time:', clientTime);
+            console.log('Time difference:', clientServerTimeDiff, 'ms');
+            
             // Create managers
             trialManager = new TrialManager();
             imageLoader = new ImageLoader();
-
-            if (sessionInfo.playerNum === 1) {
-                console.log('Player 1: Generating trial sequence...');
-                trialManager.generateTrials();
-
-                let serializedTrials = trialManager.serializeTrials();
-
-                db.collection('sessions').doc(sessionInfo.sessionId).set({
-                    trialSequence: serializedTrials,
-                    trialsGenerated: true
-                }, { merge: true }).then(function() {
-                    console.log('Player 1: Trial sequence uploaded to Firebase');
-                    waitForTrialSequenceConfirmation();
-                }).catch(function(error) {
-                    console.error('Error uploading trial sequence:', error);
-                });
-
+            
+            // Player 1 generates and uploads trials, Player 2 downloads them
+            // Player 1 generates and uploads trials, Player 2 downloads them
+        if (sessionInfo.playerNum === 1) {
+            // Player 1: Generate trials and upload to Firebase
+            console.log('Player 1: Generating trial sequence...');
+            trialManager.generateTrials();
+            
+            let serializedTrials = trialManager.serializeTrials();
+            
+            db.collection('sessions').doc(sessionInfo.sessionId).set({
+                trialSequence: serializedTrials,
+                trialsGenerated: true
+            }, { merge: true }).then(function() {
+                console.log('Player 1: Trial sequence uploaded to Firebase');
+                
+                // Player 1 also waits for confirmation that data is in Firebase
+                // This ensures both players start at roughly the same time
+                waitForTrialSequenceConfirmation();
+                
+            }).catch(function(error) {
+                console.error('Error uploading trial sequence:', error);
+            });
+    
             } else {
+                // Player 2: Wait for and download trials from Firebase
                 console.log('Player 2: Waiting for trial sequence from Player 1...');
                 waitForTrialSequence();
             }
@@ -122,14 +168,18 @@ function startExperiment() {
     });
 }
 
-// Player 2 waits for Player 1 to upload the trial sequence
+// Player 2 waits for Player 1 to upload the trial sequence (using real-time listener)
 function waitForTrialSequence() {
+    // Set up a real-time listener instead of polling
     let unsubscribe = db.collection('sessions').doc(sessionInfo.sessionId).onSnapshot(function(doc) {
         if (doc.exists && doc.data().trialsGenerated && doc.data().trialSequence) {
             console.log('Player 2: Trial sequence received from Firebase');
             let serializedTrials = doc.data().trialSequence;
             trialManager.loadTrialsFromData(serializedTrials);
+            
+            // Unsubscribe from listener once we have the data
             unsubscribe();
+            
             proceedWithExperiment();
         } else {
             console.log('Player 2: Waiting for trial sequence...');
@@ -139,11 +189,35 @@ function waitForTrialSequence() {
     });
 }
 
+// Common function to continue experiment setup after trials are ready
+function proceedWithExperiment() {
+    // Set starting trial index for testing purposes
+    if (CONFIG.startingTrialIndex > 0) {
+        trialManager.currentTrialIndex = CONFIG.startingTrialIndex;
+        console.log('Starting experiment at trial index: ' + CONFIG.startingTrialIndex + ' (Trial ' + trialManager.getCurrentTrialNumber() + ')');
+    }
+    
+    // Preload images
+    imageLoader.preloadChartImages(trialManager.charts, function() {
+        console.log('Images loaded, starting experiment');
+        imageLoader.preloadSymbolImages(trialManager.symbols, function() {
+            console.log('Symbols loaded, starting experiment');
+            startPhase('instructions');
+            requestAnimationFrame(gameLoop);
+        });
+    });
+}
+
+// Get synchronized time across both clients
+function getSynchronizedTime() {
+    return Date.now() + clientServerTimeDiff;
+}
+
 // Upload that this player is ready (pressed space on instructions)
 function uploadPlayerReadyToFirebase() {
     let updateData = {};
     updateData['player' + sessionInfo.playerNum + '_ready'] = true;
-
+    
     db.collection('sessions').doc(sessionInfo.sessionId).set(updateData, { merge: true }).then(function() {
         console.log('Player ' + sessionInfo.playerNum + ' marked as ready');
     }).catch(function(error) {
@@ -151,18 +225,20 @@ function uploadPlayerReadyToFirebase() {
     });
 }
 
-// Check if both players have pressed space
+// Check if both players have pressed space (are ready)
 function checkBothPlayersPressedSpace() {
-    if (checkingSpacePress) return;
+    if (checkingSpacePress) return; // Prevent multiple simultaneous checks
     checkingSpacePress = true;
-
+    
     db.collection('sessions').doc(sessionInfo.sessionId).get().then(function(doc) {
         if (doc.exists && doc.data().player1_ready && doc.data().player2_ready) {
+            // Both players are ready
             bothPlayersPressedSpace = true;
             console.log('Both players pressed space! Ready to continue.');
             checkingSpacePress = false;
         } else {
-            checkingSpacePress = false;
+            // Not both ready yet, keep checking
+            checkingSpacePress = false;  // MOVE THIS LINE BEFORE setTimeout
             setTimeout(checkBothPlayersPressedSpace, 500);
         }
     }).catch(function(error) {
@@ -175,7 +251,7 @@ function checkBothPlayersPressedSpace() {
 // Handle keyboard input
 function handleKeyPress(event) {
     let key = event.key.toLowerCase();
-
+    
     if (key === ' ') {
         keyPressed = 'space';
     } else if (key === 'arrowleft') {
@@ -187,26 +263,12 @@ function handleKeyPress(event) {
     } else if (key === 'arrowdown') {
         keyPressed = 'down';
     }
-
+    
     console.log('Key pressed: ' + keyPressed + ' in phase: ' + currentPhase);
 }
 
-// Player 1 calls this to signal a phase change to both players via Firebase
-function signalPhaseChange(phase) {
-    if (sessionInfo.playerNum !== 1) return;
-
-    db.collection('sessions').doc(sessionInfo.sessionId).set({
-        currentPhase: phase,
-        phaseStartTime: firebase.firestore.FieldValue.serverTimestamp()
-    }, { merge: true }).then(function() {
-        console.log('Player 1 signaled phase change to: ' + phase);
-    }).catch(function(error) {
-        console.error('Error signaling phase change:', error);
-    });
-}
-
-// Both players call this when a phase change is received from Firebase
-function startPhase(phase, serverTime) {
+// Start a new phase
+function startPhase(phase) {
     // Record the duration of the previous phase
     if (phaseStartTime > 0) {
         let phaseDuration = Date.now() - phaseStartTime;
@@ -219,218 +281,192 @@ function startPhase(phase, serverTime) {
         });
         console.log('Phase "' + currentPhase + '" lasted ' + phaseDuration + 'ms');
     }
-
+    
     currentPhase = phase;
-    // Use server timestamp so both tabs measure elapsed from the same moment
-    phaseStartTime = serverTime || Date.now();
-
+    phaseStartTime = Date.now();
+    
+    // Reset decision flag when entering decision phase
     if (phase === 'decision') {
         decisionMade = false;
         decisionUploaded = false;
-        keyPressed = '';
-        playerChoice = null;
     }
-
+    
+    // Reset space press flags when entering instructions phase
     if (phase === 'instructions') {
         playerPressedSpace = false;
         bothPlayersPressedSpace = false;
         checkingSpacePress = false;
+        // Reset Firebase flags for both players
         db.collection('sessions').doc(sessionInfo.sessionId).set({
             player1_ready: false,
             player2_ready: false
         }, { merge: true });
     }
-
+    
+    // Reset partner decision fetch flag when entering feedback phase
     if (phase === 'feedback') {
+        partnerDecisionFetched = false;
         partnerChoice = null;
         partnerTimestamp = null;
+        
+        // Record points earned in this trial
+        let trial = trialManager.getCurrentTrial();
+        let pointsEarned = 0;
+        
+        // Determine points based on user's choice
+        if (keyPressed === trial.choice1Position) {
+            // Choice 1 corresponds to largerpoints
+            pointsEarned = trial.chart.largerpoints;
+        } else if (keyPressed === trial.choice2Position) {
+            // Choice 2 corresponds to smallerpoints
+            pointsEarned = trial.chart.smallerpoints;
+        }
+        // If no valid choice was made, pointsEarned remains 0
+        
+        // Record the points
+        userPoints.push({
+            trial: trialManager.getCurrentTrialNumber(),
+            choice: keyPressed,
+            chartId: trial.chartId,
+            symbolId: trial.symbol.id,
+            pointsEarned: pointsEarned
+        });
+        
+        console.log('Trial ' + trialManager.getCurrentTrialNumber() + ' - Points earned: ' + pointsEarned);
     }
-
+    
     console.log('Starting phase: ' + phase);
-}
-
-// Listen for phase changes from Firebase (both players)
-function listenForPhaseChanges() {
-    if (phaseListener) phaseListener(); // Unsubscribe any existing listener
-
-    let firstPhaseReceived = false;
-
-    phaseListener = db.collection('sessions').doc(sessionInfo.sessionId)
-        .onSnapshot(function(doc) {
-            if (!doc.exists) return;
-
-            let data = doc.data();
-            let newPhase = data.currentPhase;
-            let serverPhaseStartTime = data.phaseStartTime ?
-                data.phaseStartTime.toDate().getTime() : Date.now();
-
-            // Only act if the phase has actually changed
-            if (newPhase && newPhase !== currentPhase) {
-                console.log('Phase change received from Firebase: ' + newPhase);
-
-                // Advance trial index when moving into postFeedbackDelay
-                if (newPhase === 'postFeedbackDelay' ||
-                    (newPhase === 'complete' && currentPhase === 'feedback')) {
-                    trialManager.nextTrial();
-                    keyPressed = '';
-                }
-
-                startPhase(newPhase, serverPhaseStartTime);
-
-                // Player 2: acknowledge first phase received and start loop
-                if (sessionInfo.playerNum === 2 && !firstPhaseReceived) {
-                    firstPhaseReceived = true;
-                    db.collection('sessions').doc(sessionInfo.sessionId).set({
-                        player2_phase_acknowledged: true
-                    }, { merge: true }).then(function() {
-                        console.log('Player 2 acknowledged first phase, starting game loop');
-                        requestAnimationFrame(gameLoop);
-                    });
-                }
-            }
-        }, function(error) {
-            console.error('Error listening for phase changes:', error);
-        });
-}
-
-// Player 1 waits for Player 2 to acknowledge receiving the first phase signal
-function waitForPlayer2Acknowledgement() {
-    let unsubscribe = db.collection('sessions').doc(sessionInfo.sessionId)
-        .onSnapshot(function(doc) {
-            if (doc.exists && doc.data().player2_phase_acknowledged) {
-                console.log('Player 2 acknowledged! Starting Player 1 game loop');
-                unsubscribe();
-                // Both players are now in sync - start Player 1's loop
-                requestAnimationFrame(gameLoop);
-            } else {
-                console.log('Waiting for Player 2 to acknowledge...');
-            }
-        });
 }
 
 // Main game loop
 function gameLoop() {
     let elapsed = Date.now() - phaseStartTime;
-
+    
     // Clear canvas
     ctx.fillStyle = CONFIG.backgroundColor;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
-
+    
+    // Handle each phase
     if (currentPhase === 'instructions') {
         renderInstructions();
-
+        
         if (keyPressed === 'space') {
             keyPressed = '';
             instructionsShown = true;
-
+            
+            // Register that this player pressed space
             if (!playerPressedSpace) {
                 playerPressedSpace = true;
                 uploadPlayerReadyToFirebase();
                 checkBothPlayersPressedSpace();
             }
+        } else if (keyPressed === 'up') {
+            startPhase('exit');
         }
-
-        // Player 1 signals when both are ready
-        if (bothPlayersPressedSpace && sessionInfo.playerNum === 1) {
-            if (trialManager.hasMoreTrials()) {
-                signalPhaseChange('baseline');
-            } else {
-                signalPhaseChange('complete');
-            }
+        
+        // Only move to next phase if both players pressed space
+        if (bothPlayersPressedSpace && trialManager.hasMoreTrials()) {
+            startPhase('baseline');
+        } else if (bothPlayersPressedSpace && !trialManager.hasMoreTrials()) {
+            startPhase('complete');
         }
-
+        
     } else if (currentPhase === 'sample') {
         renderSample();
-        if (elapsed >= CONFIG.sampleDuration && sessionInfo.playerNum === 1) {
-            signalPhaseChange('delay');
+        if (elapsed >= CONFIG.sampleDuration) {
+            startPhase('delay');
         }
-
+        
     } else if (currentPhase === 'delay') {
         renderDelay();
-        if (elapsed >= CONFIG.delayDuration && sessionInfo.playerNum === 1) {
-            signalPhaseChange('decision');
+        if (elapsed >= CONFIG.delayDuration) {
+            keyPressed = '';
+            startPhase('decision');
         }
-
+        
     } else if (currentPhase === 'decision') {
         renderDecision();
-
+        
         let trial = trialManager.getCurrentTrial();
-
+        
+        // Only process key presses if a decision hasn't been made yet
         if (!decisionMade) {
-            let validChoice = (keyPressed === trial.choice1Position ||
+            let validChoice = (keyPressed === trial.choice1Position || 
                               keyPressed === trial.choice2Position);
-
+            
             if (validChoice) {
                 decisionMade = true;
-                playerChoice = keyPressed;
-
+                
+                // Upload the decision to Firebase if not already uploaded
                 if (!decisionUploaded && sessionInfo && sessionInfo.sessionId) {
                     uploadDecisionToFirebase(keyPressed, trial);
                     decisionUploaded = true;
                 }
             }
-
+            
             if (keyPressed === 'w' && !validChoice) {
-                signalPhaseChange('exit');
+                startPhase('exit');
             }
         }
-
-        if (elapsed >= CONFIG.decisionDuration && sessionInfo.playerNum === 1) {
-            signalPhaseChange('feedback');
+        
+        // Move to feedback only after the full decision duration has elapsed
+        if (elapsed >= CONFIG.decisionDuration) {
+            startPhase('feedback');
         }
-
+        
     } else if (currentPhase === 'feedback') {
-        // Keep retrying until we get the partner's choice
-        if (!partnerChoice) {
+        // Fetch other player's decision on first render
+        if (!partnerDecisionFetched) {
+            partnerDecisionFetched = true;
             getOtherPlayerDecision(function(otherPlayerData) {
                 if (otherPlayerData) {
                     partnerChoice = otherPlayerData.choice;
                     partnerTimestamp = otherPlayerData.timestamp;
                     console.log('Partner choice retrieved:', partnerChoice, 'at timestamp:', partnerTimestamp);
                 } else {
-                    console.log('Partner choice not yet available, will retry...');
+                    console.log('Partner choice not yet available');
                 }
             });
         }
-
+        
         renderFeedback();
-        if (elapsed >= CONFIG.feedbackDuration && sessionInfo.playerNum === 1) {
+        if (elapsed >= CONFIG.feedbackDuration) {
+            trialManager.nextTrial();
+            keyPressed = '';
             if (trialManager.hasMoreTrials()) {
-                signalPhaseChange('postFeedbackDelay');
+                startPhase('postFeedbackDelay');
             } else {
-                signalPhaseChange('complete');
+                startPhase('complete');
             }
         }
-
+        
     } else if (currentPhase === 'postFeedbackDelay') {
         renderPostFeedbackDelay();
-        if (elapsed >= CONFIG.postFeedbackDelayDuration && sessionInfo.playerNum === 1) {
-            if (trialManager.hasMoreTrials()) {
-                signalPhaseChange('baseline');
-            } else {
-                signalPhaseChange('complete');
-            }
+        if (elapsed >= CONFIG.postFeedbackDelayDuration) {
+            keyPressed = '';
+            startPhase('baseline');
         }
-
+        
     } else if (currentPhase === 'baseline') {
         renderBaseline();
-        if (elapsed >= CONFIG.baselineDuration && sessionInfo.playerNum === 1) {
+        if (elapsed >= CONFIG.baselineDuration) {
+            keyPressed = '';
             if (trialManager.hasMoreTrials()) {
-                signalPhaseChange('sample');
+                startPhase('sample');
             } else {
-                signalPhaseChange('complete');
+                startPhase('complete');
             }
         }
-
+        
     } else if (currentPhase === 'complete') {
         renderComplete();
         return;
-
+        
     } else if (currentPhase === 'exit') {
         renderExit();
         return;
     }
-
+    
     requestAnimationFrame(gameLoop);
 }
 
@@ -447,7 +483,8 @@ function renderInstructions() {
 
 function renderBaseline() {
     let trial = trialManager.getCurrentTrial();
-
+    
+    // Blank white screen with only the symbol displayed as a small crosshair in center
     let symbolImg = imageLoader.getSymbolImage(trial.symbol.id);
     if (symbolImg) {
         drawImage(symbolImg, canvas.width / 2, canvas.height / 2, 32, 32);
@@ -457,13 +494,14 @@ function renderBaseline() {
 function renderSample() {
     let trial = trialManager.getCurrentTrial();
     let img = imageLoader.getChartImage(trial.chartId, 'sample');
-
+    
     if (img) {
         drawImage(img, canvas.width / 2, canvas.height - 180, 256, 256);
     } else {
         drawText('[Sample Chart ' + trial.chartId + ']', canvas.width / 2, canvas.height - 180, '20px Arial', 'center');
     }
-
+    
+    // Display the symbol image as a small crosshair in center
     let symbolImg = imageLoader.getSymbolImage(trial.symbol.id);
     if (symbolImg) {
         drawImage(symbolImg, canvas.width / 2, canvas.height / 2, 32, 32);
@@ -472,7 +510,8 @@ function renderSample() {
 
 function renderDelay() {
     let trial = trialManager.getCurrentTrial();
-
+    
+    // Display the symbol image as a small crosshair in center during delay
     let symbolImg = imageLoader.getSymbolImage(trial.symbol.id);
     if (symbolImg) {
         drawImage(symbolImg, canvas.width / 2, canvas.height / 2, 32, 32);
@@ -480,102 +519,126 @@ function renderDelay() {
 }
 
 function renderPostFeedbackDelay() {
-    // Blank white screen
+    // Blank white screen - no symbol display
 }
 
 function renderDecision() {
     let trial = trialManager.getCurrentTrial();
-
+    
+    // Get images
     let choice1Img = imageLoader.getChartImage(trial.chartId, 'choice1');
     let choice2Img = imageLoader.getChartImage(trial.chartId, 'choice2');
-
+    
+    // Get positions
     let pos1 = trialManager.getPositionCoords(trial.choice1Position, canvas.width, canvas.height);
     let pos2 = trialManager.getPositionCoords(trial.choice2Position, canvas.width, canvas.height);
-
+    
+    // Draw choice 1
     if (choice1Img) {
         drawImage(choice1Img, pos1.x, pos1.y, 256, 256);
     } else {
         drawText('[Choice 1]', pos1.x, pos1.y, '20px Arial', 'center');
     }
-
+    
+    // Draw choice 2
     if (choice2Img) {
         drawImage(choice2Img, pos2.x, pos2.y, 256, 256);
     } else {
         drawText('[Choice 2]', pos2.x, pos2.y, '20px Arial', 'center');
     }
-
+    
     drawText('Press arrow key for your choice', canvas.width / 2, 30, '20px Arial', 'center');
 }
 
 function renderFeedback() {
     let trial = trialManager.getCurrentTrial();
-
+    
+    // Display both result images side by side (moved up to avoid center)
     let leftX = canvas.width / 3;
     let rightX = canvas.width * 2 / 3;
     let imageY = canvas.height / 2 - 120;
     let pointsY = canvas.height / 2 + 80;
     let playerPointsY = canvas.height / 2 + 140;
-
+    
+    // Get both result images
     let result1Img = imageLoader.getChartImage(trial.chartId, 'result1');
     let result2Img = imageLoader.getChartImage(trial.chartId, 'result2');
     let points1 = trial.chart.largerpoints;
     let points2 = trial.chart.smallerpoints;
-
+    
+    // Calculate points based on game type (symbol ID)
     let yourPoints = 0;
     let otherPlayerPoints = 0;
     let symbolId = trial.symbol.id;
-
+    
     if (symbolId === 1) {
         // Coordination: must choose different options
-        if (playerChoice && partnerChoice && playerChoice !== partnerChoice) {
-            yourPoints = (playerChoice === trial.choice1Position) ? points1 : points2;
+        if (keyPressed && partnerChoice && keyPressed !== partnerChoice) {
+            // Different choices - both get points
+            yourPoints = (keyPressed === trial.choice1Position) ? points1 : points2;
             otherPlayerPoints = (partnerChoice === trial.choice1Position) ? points1 : points2;
         }
-
+        // Same choices or missing choice - both get 0 points
+        
     } else if (symbolId === 2) {
         // Anti-coordination: must choose the same option
-        if (playerChoice && partnerChoice && playerChoice === partnerChoice) {
-            yourPoints = (playerChoice === trial.choice1Position) ? points1 : points2;
+        if (keyPressed && partnerChoice && keyPressed === partnerChoice) {
+            // Same choice - both get points
+            yourPoints = (keyPressed === trial.choice1Position) ? points1 : points2;
             otherPlayerPoints = yourPoints;
         }
-
+        // Different choices or missing choice - both get 0 points
+        
     } else if (symbolId === 3) {
         // Competition: first player who chose gets points
-        if (playerChoice && !partnerChoice) {
-            yourPoints = (playerChoice === trial.choice1Position) ? points1 : points2;
+        // If only you picked: you get points
+        // If only partner picked: they get points
+        // If both picked same option: whoever picked first gets points
+        // If both picked different options: both get their respective points
+        
+        if (keyPressed && !partnerChoice) {
+            // Only you picked - you get points
+            yourPoints = (keyPressed === trial.choice1Position) ? points1 : points2;
             otherPlayerPoints = 0;
-        } else if (!playerChoice && partnerChoice) {
+        } else if (!keyPressed && partnerChoice) {
+            // Only partner picked - they get points
             yourPoints = 0;
             otherPlayerPoints = (partnerChoice === trial.choice1Position) ? points1 : points2;
-        } else if (playerChoice && partnerChoice) {
-            if (partnerChoice === playerChoice) {
+        } else if (keyPressed && partnerChoice) {
+            // Both picked
+            if (partnerChoice === keyPressed) {
+                // Both chose the same option - whoever chose FIRST gets points
                 if (yourDecisionTimestamp && partnerTimestamp) {
                     let yourTime = yourDecisionTimestamp.toDate ? yourDecisionTimestamp.toDate().getTime() : yourDecisionTimestamp;
                     let partnerTime = partnerTimestamp.toDate ? partnerTimestamp.toDate().getTime() : partnerTimestamp;
-
+                    
                     if (yourTime < partnerTime) {
-                        yourPoints = (playerChoice === trial.choice1Position) ? points1 : points2;
+                        // You chose first
+                        yourPoints = (keyPressed === trial.choice1Position) ? points1 : points2;
                         otherPlayerPoints = 0;
                     } else {
+                        // Partner chose first
                         yourPoints = 0;
                         otherPlayerPoints = (partnerChoice === trial.choice1Position) ? points1 : points2;
                     }
                 } else {
-                    yourPoints = (playerChoice === trial.choice1Position) ? points1 : points2;
+                    // Timestamps not yet available, assume you get it
+                    yourPoints = (keyPressed === trial.choice1Position) ? points1 : points2;
                     otherPlayerPoints = 0;
                 }
             } else {
-                yourPoints = (playerChoice === trial.choice1Position) ? points1 : points2;
+                // Chose different options - both get their respective points
+                yourPoints = (keyPressed === trial.choice1Position) ? points1 : points2;
                 otherPlayerPoints = (partnerChoice === trial.choice1Position) ? points1 : points2;
             }
         }
     }
-
+    
     // Update the last user points entry with calculated points
     if (userPoints.length > 0) {
         userPoints[userPoints.length - 1].pointsEarned = yourPoints;
     }
-
+    
     // Draw result 1 (left side)
     if (result1Img) {
         drawImage(result1Img, leftX, imageY, 256, 256);
@@ -583,7 +646,7 @@ function renderFeedback() {
         drawText('[Result 1]', leftX, imageY, '20px Arial', 'center');
     }
     drawText('Points: ' + points1, leftX, pointsY, '28px Arial', 'center');
-
+    
     // Draw result 2 (right side)
     if (result2Img) {
         drawImage(result2Img, rightX, imageY, 256, 256);
@@ -591,30 +654,34 @@ function renderFeedback() {
         drawText('[Result 2]', rightX, imageY, '20px Arial', 'center');
     }
     drawText('Points: ' + points2, rightX, pointsY, '28px Arial', 'center');
-
-    // Draw green box around your choice
+    
+    // Draw green box around user's choice
     ctx.strokeStyle = '#00FF00';
     ctx.lineWidth = 3;
-    let boxSize = 140;
-
-    if (playerChoice === trial.choice1Position) {
+    let boxSize = 140; // Half size for box around 256x256 image
+    
+    if (keyPressed === trial.choice1Position) {
+        // Highlight left choice
         ctx.strokeRect(leftX - boxSize, imageY - boxSize, boxSize * 2, boxSize * 2);
-    } else if (playerChoice === trial.choice2Position) {
+    } else if (keyPressed === trial.choice2Position) {
+        // Highlight right choice
         ctx.strokeRect(rightX - boxSize, imageY - boxSize, boxSize * 2, boxSize * 2);
     }
-
+    
     // Draw red box around partner's choice
     if (partnerChoice) {
         ctx.strokeStyle = '#FF0000';
         ctx.lineWidth = 1;
-
+        
         if (partnerChoice === trial.choice1Position) {
+            // Highlight left choice
             ctx.strokeRect(leftX - boxSize, imageY - boxSize, boxSize * 2, boxSize * 2);
         } else if (partnerChoice === trial.choice2Position) {
+            // Highlight right choice
             ctx.strokeRect(rightX - boxSize, imageY - boxSize, boxSize * 2, boxSize * 2);
         }
     }
-
+    
     // Display player points
     drawText('You got: ' + yourPoints + ' points', leftX, playerPointsY, '24px Arial', 'center');
     drawText('Other player got: ' + otherPlayerPoints + ' points', rightX, playerPointsY, '24px Arial', 'center');
@@ -626,20 +693,24 @@ function renderComplete() {
 }
 
 function renderExit() {
-    drawText('Experiment ended early.', canvas.width / 2, canvas.height / 2, '32px Arial', 'center');
+    drawText('Up arrow pressed\n\nExperiment ended', canvas.width / 2, canvas.height / 2, '32px Arial', 'center');
     savePhaseDurations();
 }
 
-// Save phase durations to console
+function renderExit() {
+    drawText('Up arrow pressed\n\nExperiment ended', canvas.width / 2, canvas.height / 2, '32px Arial', 'center');
+}
+
+// Save phase durations to file
 function savePhaseDurations() {
     let fileContent = 'Phase Duration Report\n';
     fileContent += '======================\n\n';
     fileContent += 'Timestamp: ' + new Date().toISOString() + '\n\n';
-
+    
     let totalDuration = 0;
     fileContent += 'Phase Details:\n';
     fileContent += '--------------\n';
-
+    
     for (let i = 0; i < phaseDurations.length; i++) {
         let entry = phaseDurations[i];
         fileContent += 'Entry ' + (i + 1) + ':\n';
@@ -649,12 +720,13 @@ function savePhaseDurations() {
         fileContent += '  Symbol: ' + (entry.symbol !== null ? entry.symbol : 'N/A') + '\n\n';
         totalDuration += entry.duration;
     }
-
+    
     fileContent += '\nSummary:\n';
     fileContent += '--------\n';
     fileContent += 'Total Phases: ' + phaseDurations.length + '\n';
     fileContent += 'Total Experiment Duration: ' + totalDuration + 'ms (' + (totalDuration / 1000).toFixed(2) + 's)\n';
-
+    
+    // Add points summary
     let totalPoints = 0;
     fileContent += '\n\nPoints Summary:\n';
     fileContent += '---------------\n';
@@ -664,7 +736,8 @@ function savePhaseDurations() {
         totalPoints += pointEntry.pointsEarned;
     }
     fileContent += '\nTotal Points Earned: ' + totalPoints + '\n';
-
+    
+    // Log to browser console only
     console.log(fileContent);
     console.log('Phase data object:', phaseDurations);
     console.log('Points data object:', userPoints);
@@ -676,7 +749,7 @@ function uploadDecisionToFirebase(choice, trial) {
         console.warn('Session info not available, cannot upload decision');
         return;
     }
-
+    
     const decisionData = {
         sessionId: sessionInfo.sessionId,
         playerNum: sessionInfo.playerNum,
@@ -688,11 +761,12 @@ function uploadDecisionToFirebase(choice, trial) {
         choice2Position: trial.choice2Position,
         timestamp: firebase.firestore.FieldValue.serverTimestamp()
     };
-
+    
     db.collection('sessions').doc(sessionInfo.sessionId)
         .collection('decisions').add(decisionData)
         .then(function(docRef) {
             console.log('Decision uploaded successfully with ID:', docRef.id);
+            // Fetch the decision back to get the actual server timestamp
             db.collection('sessions').doc(sessionInfo.sessionId)
                 .collection('decisions').doc(docRef.id)
                 .get()
@@ -718,10 +792,10 @@ function getOtherPlayerDecision(callback) {
         callback(null);
         return;
     }
-
+    
     const otherPlayerNum = sessionInfo.playerNum === 1 ? 2 : 1;
     const currentTrialNumber = trialManager.getCurrentTrialNumber();
-
+    
     db.collection('sessions').doc(sessionInfo.sessionId)
         .collection('decisions')
         .where('playerNum', '==', otherPlayerNum)
@@ -750,11 +824,11 @@ function drawText(text, x, y, font, align) {
     ctx.font = font;
     ctx.textAlign = align;
     ctx.textBaseline = 'middle';
-
+    
     let lines = text.split('\n');
     let lineHeight = parseInt(font) * 1.2;
     let startY = y - (lines.length - 1) * lineHeight / 2;
-
+    
     for (let i = 0; i < lines.length; i++) {
         ctx.fillText(lines[i], x, startY + i * lineHeight);
     }
@@ -764,44 +838,57 @@ function drawImage(img, x, y, width, height) {
     ctx.drawImage(img, x - width / 2, y - height / 2, width, height);
 }
 
+// Start when page loads
+window.addEventListener('load', function() {
+    init();
+    registerPlayerInSession();
+});
+
 function getSessionInfo() {
     let sessionId = prompt("Enter Session ID (both players use same ID):");
-    let playerNum = parseInt(prompt("Enter Player Number (1 or 2):"));
-
+    let playerNum = parseInt(prompt("Enter ID: "));
+    
     if (!sessionId || (playerNum !== 1 && playerNum !== 2)) {
         alert("Invalid! Refresh and try again.");
         throw new Error("Invalid session info");
     }
-
+    
     return { sessionId, playerNum };
 }
 
-function init() {
-    console.log('Initializing experiment...');
-    sessionInfo = getSessionInfo();
-    console.log('Session:', sessionInfo.sessionId, 'Player:', sessionInfo.playerNum);
+// Upload player's choice to Firebase
+async function uploadChoice(trialNum, choice) {
+    let docRef = db.collection('sessions')
+        .doc(sessionInfo.sessionId)
+        .collection('trials')
+        .doc('trial_' + trialNum);
+    
+    let fieldName = 'player' + sessionInfo.playerNum + '_choice';
+    let data = {};
+    data[fieldName] = choice;
+    
+    await docRef.set(data, { merge: true });
+    console.log('Uploaded my choice:', choice);
+}
 
-    // Register player now that sessionInfo is set
-    registerPlayerInSession();
-
-    // Create canvas
-    canvas = document.createElement('canvas');
-    canvas.width = CONFIG.canvasWidth;
-    canvas.height = CONFIG.canvasHeight;
-    canvas.style.display = 'block';
-    canvas.style.margin = '0 auto';
-    canvas.style.backgroundColor = CONFIG.backgroundColor;
-    document.getElementById('root').appendChild(canvas);
-    ctx = canvas.getContext('2d');
-
-    // Set up keyboard listener
-    document.addEventListener('keydown', handleKeyPress);
-
-    // Display waiting screen and wait for both players
-    displayWaitingScreen();
-
-    // Check if both players are ready
-    checkPlayersReady();
+// Get partner's choice from Firebase (doesn't wait, just reads whatever's there)
+async function getPartnerChoice(trialNum) {
+    let docRef = db.collection('sessions')
+        .doc(sessionInfo.sessionId)
+        .collection('trials')
+        .doc('trial_' + trialNum);
+    
+    let partnerField = 'player' + (sessionInfo.playerNum === 1 ? 2 : 1) + '_choice';
+    
+    let doc = await docRef.get();
+    if (doc.exists) {
+        let data = doc.data();
+        let choice = data[partnerField] || null;
+        console.log('Partner choice:', choice);
+        return choice;
+    }
+    
+    return null;  //partner didnt choose 
 }
 
 // Player 1 waits for confirmation that trials are in Firebase
@@ -811,6 +898,7 @@ function waitForTrialSequenceConfirmation() {
             console.log('Player 1: Trial sequence confirmed in Firebase');
             proceedWithExperiment();
         } else {
+            // Shouldn't happen, but just in case
             setTimeout(waitForTrialSequenceConfirmation, 100);
         }
     }).catch(function(error) {
@@ -820,19 +908,16 @@ function waitForTrialSequenceConfirmation() {
 }
 
 function proceedWithExperiment() {
+    // Set starting trial index for testing purposes
     if (CONFIG.startingTrialIndex > 0) {
         trialManager.currentTrialIndex = CONFIG.startingTrialIndex;
         console.log('Starting experiment at trial index: ' + CONFIG.startingTrialIndex + ' (Trial ' + trialManager.getCurrentTrialNumber() + ')');
     }
-
-    // Reset acknowledgement flag for a fresh start
-    db.collection('sessions').doc(sessionInfo.sessionId).set({
-        player2_phase_acknowledged: false
-    }, { merge: true });
-
+    
+    // Mark this player as having loaded trials
     let updateData = {};
     updateData['player' + sessionInfo.playerNum + '_trials_loaded'] = true;
-
+    
     db.collection('sessions').doc(sessionInfo.sessionId).set(updateData, { merge: true }).then(function() {
         console.log('Player ' + sessionInfo.playerNum + ' marked as trials loaded');
         waitForBothPlayersTrialsLoaded();
@@ -845,15 +930,17 @@ function waitForBothPlayersTrialsLoaded() {
         if (doc.exists && doc.data().player1_trials_loaded && doc.data().player2_trials_loaded) {
             console.log('Both players have loaded trials! Preloading images...');
             unsubscribe();
-
+            
+            // Preload images
             imageLoader.preloadChartImages(trialManager.charts, function() {
                 console.log('Charts loaded');
                 imageLoader.preloadSymbolImages(trialManager.symbols, function() {
                     console.log('Symbols loaded');
-
+                    
+                    // Signal that THIS player has finished loading images
                     let updateData = {};
                     updateData['player' + sessionInfo.playerNum + '_images_loaded'] = true;
-
+                    
                     db.collection('sessions').doc(sessionInfo.sessionId).set(updateData, { merge: true }).then(function() {
                         console.log('Player ' + sessionInfo.playerNum + ' images loaded, waiting for other player...');
                         waitForBothPlayersImagesLoaded();
@@ -864,25 +951,15 @@ function waitForBothPlayersTrialsLoaded() {
     });
 }
 
-// Wait for both players to finish loading images before starting
+// Wait for both players to finish loading images before starting the experiment
 function waitForBothPlayersImagesLoaded() {
     let unsubscribe = db.collection('sessions').doc(sessionInfo.sessionId).onSnapshot(function(doc) {
         if (doc.exists && doc.data().player1_images_loaded && doc.data().player2_images_loaded) {
             console.log('Both players have loaded images! Starting experiment NOW!');
             unsubscribe();
-
-            // Start listening for phase changes from Firebase
-            listenForPhaseChanges();
-
-            if (sessionInfo.playerNum === 1) {
-                // Player 1 signals the first phase, then waits for Player 2 to acknowledge
-                // before starting its own game loop - ensuring both start together
-                signalPhaseChange('instructions');
-                waitForPlayer2Acknowledgement();
-            }
-            // Player 2's game loop is started inside listenForPhaseChanges
-            // once the first phase signal is received and acknowledged
-
+            
+            startPhase('instructions');
+            requestAnimationFrame(gameLoop);
         } else {
             console.log('Waiting for other player to finish loading images...');
         }
