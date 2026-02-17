@@ -1,6 +1,8 @@
 // experiment.js
 // Main experiment logic
 
+//tesjaglasdj;ldsak
+
 // Configuration
 const CONFIG = {
     canvasWidth: 1024,
