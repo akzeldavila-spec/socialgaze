@@ -478,6 +478,7 @@ function renderInstructions() {
         let text = 'Waiting for other player to press SPACE...';
         drawText(text, canvas.width / 2, canvas.height / 2, '24px Arial', 'center');
     }
+    renderLegend();
 }
 
 function renderBaseline() {
@@ -488,19 +489,39 @@ function renderBaseline() {
     if (symbolImg) {
         drawImage(symbolImg, canvas.width / 2, canvas.height / 2, 32, 32);
     }
+    renderLegend();
 }
 
 function renderSample() {
+    renderLegend();
     let trial = trialManager.getCurrentTrial();
     let img = imageLoader.getChartImage(trial.chartId, 'sample');
-    
-    if (img) {
-        drawImage(img, canvas.width / 2, canvas.height - 180, 256, 256);
+
+    // Determine which axis the decision charts are on
+    let isVertical = (trial.choice1Position === 'up' || trial.choice1Position === 'down');
+
+    // Place sample charts on the perpendicular axis
+    let samplePos1, samplePos2;
+    if (isVertical) {
+        // Decision is up/down → sample charts go left/right
+        samplePos1 = trialManager.getPositionCoords('left', canvas.width, canvas.height);
+        samplePos2 = trialManager.getPositionCoords('right', canvas.width, canvas.height);
     } else {
-        drawText('[Sample Chart ' + trial.chartId + ']', canvas.width / 2, canvas.height - 180, '20px Arial', 'center');
+        // Decision is left/right → sample charts go up/down
+        samplePos1 = trialManager.getPositionCoords('up', canvas.width, canvas.height);
+        samplePos2 = trialManager.getPositionCoords('down', canvas.width, canvas.height);
     }
-    
-    // Display the symbol image as a small crosshair in center
+
+    // Draw the sample chart at both positions
+    if (img) {
+        drawImage(img, samplePos1.x, samplePos1.y, 256, 256);
+        drawImage(img, samplePos2.x, samplePos2.y, 256, 256);
+    } else {
+        drawText('[Sample Chart ' + trial.chartId + ']', samplePos1.x, samplePos1.y, '20px Arial', 'center');
+        drawText('[Sample Chart ' + trial.chartId + ']', samplePos2.x, samplePos2.y, '20px Arial', 'center');
+    }
+
+    // Display the symbol crosshair in the center as before
     let symbolImg = imageLoader.getSymbolImage(trial.symbol.id);
     if (symbolImg) {
         drawImage(symbolImg, canvas.width / 2, canvas.height / 2, 32, 32);
@@ -515,6 +536,7 @@ function renderDelay() {
     if (symbolImg) {
         drawImage(symbolImg, canvas.width / 2, canvas.height / 2, 32, 32);
     }
+    renderLegend();
 }
 
 function renderPostFeedbackDelay() {
@@ -522,6 +544,7 @@ function renderPostFeedbackDelay() {
 }
 
 function renderDecision() {
+    renderLegend();
     let trial = trialManager.getCurrentTrial();
     
     // Get images
@@ -552,16 +575,12 @@ function renderDecision() {
 function renderFeedback() {
     let trial = trialManager.getCurrentTrial();
     
-    // Display both result images side by side (moved up to avoid center)
     let leftX = canvas.width / 3;
     let rightX = canvas.width * 2 / 3;
     let imageY = canvas.height / 2 - 120;
     let pointsY = canvas.height / 2 + 80;
     let playerPointsY = canvas.height / 2 + 140;
     
-    // Get both result images
-    let result1Img = imageLoader.getChartImage(trial.chartId, 'result1');
-    let result2Img = imageLoader.getChartImage(trial.chartId, 'result2');
     let points1 = trial.chart.largerpoints;
     let points2 = trial.chart.smallerpoints;
     
@@ -571,25 +590,16 @@ function renderFeedback() {
     let symbolId = trial.symbol.id;
     
     if (symbolId === 1) {
-        // Coordination: must choose different options
         if (keyPressed && partnerChoice && keyPressed !== partnerChoice) {
-            // Different choices - both get points
             yourPoints = (keyPressed === trial.choice1Position) ? points1 : points2;
             otherPlayerPoints = (partnerChoice === trial.choice1Position) ? points1 : points2;
         }
-        // Same choices or missing choice - both get 0 points
-        
     } else if (symbolId === 2) {
-        // Anti-coordination: must choose the same option
         if (keyPressed && partnerChoice && keyPressed === partnerChoice) {
-            // Same choice - both get points
             yourPoints = (keyPressed === trial.choice1Position) ? points1 : points2;
             otherPlayerPoints = yourPoints;
         }
-        // Different choices or missing choice - both get 0 points
-        
     } else if (symbolId === 3) {
-        // Competition: first player who chose gets points
         if (keyPressed && !partnerChoice) {
             yourPoints = (keyPressed === trial.choice1Position) ? points1 : points2;
             otherPlayerPoints = 0;
@@ -601,7 +611,6 @@ function renderFeedback() {
                 if (yourDecisionTimestamp && partnerTimestamp) {
                     let yourTime = yourDecisionTimestamp.toDate ? yourDecisionTimestamp.toDate().getTime() : yourDecisionTimestamp;
                     let partnerTime = partnerTimestamp.toDate ? partnerTimestamp.toDate().getTime() : partnerTimestamp;
-                    
                     if (yourTime < partnerTime) {
                         yourPoints = (keyPressed === trial.choice1Position) ? points1 : points2;
                         otherPlayerPoints = 0;
@@ -624,51 +633,55 @@ function renderFeedback() {
     if (userPoints.length > 0) {
         userPoints[userPoints.length - 1].pointsEarned = yourPoints;
     }
-    
-    // Draw result 1 (left side)
-    if (result1Img) {
-        drawImage(result1Img, leftX, imageY, 256, 256);
-    } else {
-        drawText('[Result 1]', leftX, imageY, '20px Arial', 'center');
-    }
-    drawText('Points: ' + points1, leftX, pointsY, '28px Arial', 'center');
-    
-    // Draw result 2 (right side)
-    if (result2Img) {
-        drawImage(result2Img, rightX, imageY, 256, 256);
-    } else {
-        drawText('[Result 2]', rightX, imageY, '20px Arial', 'center');
-    }
-    drawText('Points: ' + points2, rightX, pointsY, '28px Arial', 'center');
-    
-    // Draw green box around user's choice
-    ctx.strokeStyle = '#00FF00';
-    ctx.lineWidth = 3;
-    let boxSize = 140;
-    
-    if (keyPressed === trial.choice1Position) {
+
+    // --- YOUR CHOICE (left side) ---
+    if (keyPressed) {
+        // Determine which result image and points value correspond to the user's choice
+        let yourImg = (keyPressed === trial.choice1Position)
+            ? imageLoader.getChartImage(trial.chartId, 'result1')
+            : imageLoader.getChartImage(trial.chartId, 'result2');
+        let yourPointValue = (keyPressed === trial.choice1Position) ? points1 : points2;
+
+        if (yourImg) {
+            drawImage(yourImg, leftX, imageY, 256, 256);
+        } else {
+            drawText('[Your Choice]', leftX, imageY, '20px Arial', 'center');
+        }
+        drawText('Points: ' + yourPointValue, leftX, pointsY, '28px Arial', 'center');
+
+        // Green box around your chart
+        ctx.strokeStyle = '#006400';
+        ctx.lineWidth = 3;
+        let boxSize = 140;
         ctx.strokeRect(leftX - boxSize, imageY - boxSize, boxSize * 2, boxSize * 2);
-    } else if (keyPressed === trial.choice2Position) {
+    }
+
+    // --- PARTNER'S CHOICE (right side) ---
+    if (partnerChoice) {
+        // Determine which result image and points value correspond to the partner's choice
+        let partnerImg = (partnerChoice === trial.choice1Position)
+            ? imageLoader.getChartImage(trial.chartId, 'result1')
+            : imageLoader.getChartImage(trial.chartId, 'result2');
+        let partnerPointValue = (partnerChoice === trial.choice1Position) ? points1 : points2;
+
+        if (partnerImg) {
+            drawImage(partnerImg, rightX, imageY, 256, 256);
+        } else {
+            drawText('[Partner Choice]', rightX, imageY, '20px Arial', 'center');
+        }
+        drawText('Points: ' + partnerPointValue, rightX, pointsY, '28px Arial', 'center');
+
+        // Red box around partner's chart
+        ctx.strokeStyle = '#800080';
+        ctx.lineWidth = 1;
+        let boxSize = 140;
         ctx.strokeRect(rightX - boxSize, imageY - boxSize, boxSize * 2, boxSize * 2);
     }
-    
-    // Draw red box around partner's choice
-    if (partnerChoice) {
-        ctx.strokeStyle = '#FF0000';
-        ctx.lineWidth = 1;
-        
-        if (partnerChoice === trial.choice1Position) {
-            ctx.strokeRect(leftX - boxSize, imageY - boxSize, boxSize * 2, boxSize * 2);
-        } else if (partnerChoice === trial.choice2Position) {
-            ctx.strokeRect(rightX - boxSize, imageY - boxSize, boxSize * 2, boxSize * 2);
-        }
-    }
-    
-    // Display player points
+
+    // --- POINTS SUMMARY (always shown) ---
     drawText('You got: ' + yourPoints + ' points', leftX, playerPointsY, '24px Arial', 'center');
     drawText('Other player got: ' + otherPlayerPoints + ' points', rightX, playerPointsY, '24px Arial', 'center');
 }
-
 function renderComplete() {
     drawText('Experiment Complete!\n\nThank you for participating.', canvas.width / 2, canvas.height / 2, '32px Arial', 'center');
     savePhaseDurations();
@@ -945,4 +958,32 @@ function waitForBothPlayersImagesLoaded() {
             console.log('Waiting for other player to finish loading images...');
         }
     });
+}
+function renderLegend() {
+    let symbols = trialManager.symbols;
+    let labels = {
+        1: 'Coordination',
+        2: 'Anticoordination', 
+        3: 'Competition'
+    };
+
+    let iconSize = 24;
+    let rowHeight = 32;
+    let startX = 10;
+    let startY = canvas.height - (symbols.length * rowHeight) - 10;
+
+    for (let i = 0; i < symbols.length; i++) {
+        let symbolImg = imageLoader.getSymbolImage(symbols[i].id);
+        let y = startY + i * rowHeight;
+
+        if (symbolImg) {
+            ctx.drawImage(symbolImg, startX, y, iconSize, iconSize);
+        }
+
+        ctx.fillStyle = '#333333';
+        ctx.font = '14px Arial';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(labels[symbols[i].id], startX + iconSize + 8, y + iconSize / 2);
+    }
 }
