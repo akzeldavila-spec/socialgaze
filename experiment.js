@@ -1,8 +1,6 @@
 // experiment.js
 // Main experiment logic
 
-//tesjaglasdj;ldsak
-
 // Configuration
 const CONFIG = {
     canvasWidth: 1024,
@@ -32,7 +30,6 @@ let sessionInfo = null;
 let partnerChoice = null;
 let partnerTimestamp = null;
 let yourDecisionTimestamp = null;
-let partnerDecisionFetched = false;
 let bothPlayersReady = false;
 let experimentStartTime = null;
 let clientServerTimeDiff = 0;
@@ -240,7 +237,7 @@ function checkBothPlayersPressedSpace() {
             checkingSpacePress = false;
         } else {
             // Not both ready yet, keep checking
-            checkingSpacePress = false;  // MOVE THIS LINE BEFORE setTimeout
+            checkingSpacePress = false;
             setTimeout(checkBothPlayersPressedSpace, 500);
         }
     }).catch(function(error) {
@@ -593,43 +590,30 @@ function renderFeedback() {
         
     } else if (symbolId === 3) {
         // Competition: first player who chose gets points
-        // If only you picked: you get points
-        // If only partner picked: they get points
-        // If both picked same option: whoever picked first gets points
-        // If both picked different options: both get their respective points
-        
         if (keyPressed && !partnerChoice) {
-            // Only you picked - you get points
             yourPoints = (keyPressed === trial.choice1Position) ? points1 : points2;
             otherPlayerPoints = 0;
         } else if (!keyPressed && partnerChoice) {
-            // Only partner picked - they get points
             yourPoints = 0;
             otherPlayerPoints = (partnerChoice === trial.choice1Position) ? points1 : points2;
         } else if (keyPressed && partnerChoice) {
-            // Both picked
             if (partnerChoice === keyPressed) {
-                // Both chose the same option - whoever chose FIRST gets points
                 if (yourDecisionTimestamp && partnerTimestamp) {
                     let yourTime = yourDecisionTimestamp.toDate ? yourDecisionTimestamp.toDate().getTime() : yourDecisionTimestamp;
                     let partnerTime = partnerTimestamp.toDate ? partnerTimestamp.toDate().getTime() : partnerTimestamp;
                     
                     if (yourTime < partnerTime) {
-                        // You chose first
                         yourPoints = (keyPressed === trial.choice1Position) ? points1 : points2;
                         otherPlayerPoints = 0;
                     } else {
-                        // Partner chose first
                         yourPoints = 0;
                         otherPlayerPoints = (partnerChoice === trial.choice1Position) ? points1 : points2;
                     }
                 } else {
-                    // Timestamps not yet available, assume you get it
                     yourPoints = (keyPressed === trial.choice1Position) ? points1 : points2;
                     otherPlayerPoints = 0;
                 }
             } else {
-                // Chose different options - both get their respective points
                 yourPoints = (keyPressed === trial.choice1Position) ? points1 : points2;
                 otherPlayerPoints = (partnerChoice === trial.choice1Position) ? points1 : points2;
             }
@@ -660,13 +644,11 @@ function renderFeedback() {
     // Draw green box around user's choice
     ctx.strokeStyle = '#00FF00';
     ctx.lineWidth = 3;
-    let boxSize = 140; // Half size for box around 256x256 image
+    let boxSize = 140;
     
     if (keyPressed === trial.choice1Position) {
-        // Highlight left choice
         ctx.strokeRect(leftX - boxSize, imageY - boxSize, boxSize * 2, boxSize * 2);
     } else if (keyPressed === trial.choice2Position) {
-        // Highlight right choice
         ctx.strokeRect(rightX - boxSize, imageY - boxSize, boxSize * 2, boxSize * 2);
     }
     
@@ -676,10 +658,8 @@ function renderFeedback() {
         ctx.lineWidth = 1;
         
         if (partnerChoice === trial.choice1Position) {
-            // Highlight left choice
             ctx.strokeRect(leftX - boxSize, imageY - boxSize, boxSize * 2, boxSize * 2);
         } else if (partnerChoice === trial.choice2Position) {
-            // Highlight right choice
             ctx.strokeRect(rightX - boxSize, imageY - boxSize, boxSize * 2, boxSize * 2);
         }
     }
@@ -768,7 +748,6 @@ function uploadDecisionToFirebase(choice, trial) {
         .collection('decisions').add(decisionData)
         .then(function(docRef) {
             console.log('Decision uploaded successfully with ID:', docRef.id);
-            // Fetch the decision back to get the actual server timestamp
             db.collection('sessions').doc(sessionInfo.sessionId)
                 .collection('decisions').doc(docRef.id)
                 .get()
