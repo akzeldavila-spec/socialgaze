@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Social Gaze Experiment</title>
+    <link rel="stylesheet" href="styles.css">
+    
+    <!-- Firebase v8 SDK -->
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+</head>
+<body>
+    <div id="root"></div>
+    
+    <!-- Your Firebase configuration -->
+    <script>
+        // Firebase configuration
+        const firebaseConfig = {
+            apiKey: "AIzaSyCA3q_kwPAgZxhPx3TLqF6m4odxCw-Osds",
+            authDomain: "social-gaze-experiment.firebaseapp.com",
+            projectId: "social-gaze-experiment",
+            storageBucket: "social-gaze-experiment.firebasestorage.app",
+            messagingSenderId: "905860869067",
+            appId: "1:905860869067:web:1a7b73d77485d1e4d2a44e",
+            measurementId: "G-Y074PZE9SV"
+        };
+        
+        // Initialize Firebase
+        firebase.initializeApp(firebaseConfig);
+        const db = firebase.firestore();
+        console.log("Firebase initialized successfully!");
+    </script>
+    
+    <!-- Your experiment scripts -->
+    <script src="TrialManager.js"></script>
+    <script src="ImageLoader.js"></script>
+    <script src="experiment.js"></script>
+</body>
+</html>
