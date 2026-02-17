@@ -764,11 +764,17 @@ function drawImage(img, x, y, width, height) {
     ctx.drawImage(img, x - width / 2, y - height / 2, width, height);
 }
 
-// Start when page loads
-// Start when page loads
-window.addEventListener('load', function() {
-    init();
-});
+function getSessionInfo() {
+    let sessionId = prompt("Enter Session ID (both players use same ID):");
+    let playerNum = parseInt(prompt("Enter Player Number (1 or 2):"));
+
+    if (!sessionId || (playerNum !== 1 && playerNum !== 2)) {
+        alert("Invalid! Refresh and try again.");
+        throw new Error("Invalid session info");
+    }
+
+    return { sessionId, playerNum };
+}
 
 function init() {
     console.log('Initializing experiment...');
@@ -796,18 +802,6 @@ function init() {
 
     // Check if both players are ready
     checkPlayersReady();
-}
-
-function getSessionInfo() {
-    let sessionId = prompt("Enter Session ID (both players use same ID):");
-    let playerNum = parseInt(prompt("Enter Player Number (1 or 2):"));
-
-    if (!sessionId || (playerNum !== 1 && playerNum !== 2)) {
-        alert("Invalid! Refresh and try again.");
-        throw new Error("Invalid session info");
-    }
-
-    return { sessionId, playerNum };
 }
 
 // Player 1 waits for confirmation that trials are in Firebase
