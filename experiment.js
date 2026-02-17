@@ -633,7 +633,7 @@ function renderFeedback() {
         } else {
             drawText('[Your Choice]', leftX, imageY, '20px Arial', 'center');
         }
-        drawColoredText('Points: ' + yourPointValue, leftX, pointsY, '28px Arial', 'center', '#006400');
+        drawText('Points: ' + yourPointValue, leftX, pointsY, '28px Arial', 'center');
 
         // Green box around your chart
         ctx.strokeStyle = '#006400';
@@ -655,7 +655,7 @@ function renderFeedback() {
         } else {
             drawText('[Partner Choice]', rightX, imageY, '20px Arial', 'center');
         }
-        drawColoredText('Points: ' + partnerPointValue, rightX, pointsY, '28px Arial', 'center', '#4B0082');
+        drawText('Points: ' + partnerPointValue, rightX, pointsY, '28px Arial', 'center');
 
         // Red box around partner's chart
         ctx.strokeStyle = '#4B0082';
@@ -665,8 +665,8 @@ function renderFeedback() {
     }
 
     // --- POINTS SUMMARY (always shown) ---
-    drawText('You got: ' + yourPoints + ' points', leftX, playerPointsY, '24px Arial', 'center');
-    drawText('Other player got: ' + otherPlayerPoints + ' points', rightX, playerPointsY, '24px Arial', 'center');
+    drawColoredText('You got: ' + yourPoints + ' points', leftX, playerPointsY, '24px Arial', 'center', '#006400');
+    drawColoredText('Other player got: ' + otherPlayerPoints + ' points', rightX, playerPointsY, '24px Arial', 'center','#4B0082');
 }
 function renderComplete() {
     drawText('Experiment Complete!\n\nThank you for participating.', canvas.width / 2, canvas.height / 2, '32px Arial', 'center');
