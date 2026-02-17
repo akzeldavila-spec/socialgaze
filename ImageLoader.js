@@ -1,6 +1,3 @@
-// ImageLoader.js
-// Handles preloading and storing images
-
 class ImageLoader {
     constructor() {
         this.images = {};
